@@ -3,6 +3,9 @@ use bevy::{pbr::CubemapVisibleEntities, prelude::*, render::primitives::CubemapF
 #[derive(Component)]
 struct Arwing;
 
+#[derive(Component)]
+struct Drone;
+
 #[derive(Component, Default)]
 struct Laser;
 
@@ -33,13 +36,15 @@ fn main() {
         .add_system(normalize_rotation)
         .add_system(fire_laser)
         .add_system(move_laser)
+        .add_system(rotate_drone)
         .run()
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     spawn_camera(&mut commands);
     spawn_light(&mut commands);
-    spawn_arwing(&mut commands, asset_server);
+    spawn_drone(&mut commands, &asset_server);
+    spawn_arwing(&mut commands, &asset_server);
 }
 
 fn spawn_camera(commands: &mut Commands) {
@@ -71,7 +76,23 @@ fn spawn_light(commands: &mut Commands) {
     },));
 }
 
-fn spawn_arwing(commands: &mut Commands, asset_server: Res<AssetServer>) {
+fn spawn_drone(commands: &mut Commands, asset_server: &Res<AssetServer>) {
+    commands.spawn((
+        SceneBundle {
+            scene: asset_server.load("models/drone.glb#Scene0"),
+            transform: Transform {
+                scale: Vec3::from((0.4, 0.4, 0.4)),
+                translation: Vec3::from((0.0, 0.0, 10.0)),
+                rotation: Quat::from_rotation_z(0.5),
+                ..default()
+            },
+            ..default()
+        },
+        Drone,
+    ));
+}
+
+fn spawn_arwing(commands: &mut Commands, asset_server: &Res<AssetServer>) {
     commands.spawn((
         SceneBundle {
             scene: asset_server.load("models/arwing.glb#Scene0"),
@@ -83,6 +104,58 @@ fn spawn_arwing(commands: &mut Commands, asset_server: Res<AssetServer>) {
         },
         Arwing,
     ));
+}
+
+fn rotate_arwing(
+    time: Res<Time>,
+    mut q_arwing: Query<&mut Transform, With<Arwing>>,
+    keyboard_input: Res<Input<KeyCode>>,
+) {
+    const ROTATION_SPEED: f32 = 1.5;
+    const MAX_ROT_X: f32 = 0.4;
+    const MAX_ROT_Z: f32 = 0.7;
+    for mut transform in &mut q_arwing {
+        if keyboard_input.pressed(KeyCode::Up) || keyboard_input.pressed(KeyCode::W) {
+            let new_rot_x = transform.rotation.x + time.delta_seconds() * ROTATION_SPEED;
+            transform.rotation.x = new_rot_x.clamp(-MAX_ROT_X, MAX_ROT_X)
+        }
+        if keyboard_input.pressed(KeyCode::Down) || keyboard_input.pressed(KeyCode::S) {
+            let new_rot_x = transform.rotation.x - time.delta_seconds() * ROTATION_SPEED;
+            transform.rotation.x = new_rot_x.clamp(-MAX_ROT_X, MAX_ROT_X)
+        }
+        if keyboard_input.pressed(KeyCode::Right) || keyboard_input.pressed(KeyCode::D) {
+            let new_rot_z = transform.rotation.z + time.delta_seconds() * ROTATION_SPEED;
+            transform.rotation.z = new_rot_z.clamp(-MAX_ROT_Z, MAX_ROT_Z)
+        }
+        if keyboard_input.pressed(KeyCode::Left) || keyboard_input.pressed(KeyCode::A) {
+            let new_rot_z = transform.rotation.z - time.delta_seconds() * ROTATION_SPEED;
+            transform.rotation.z = new_rot_z.clamp(-MAX_ROT_Z, MAX_ROT_Z)
+        }
+    }
+}
+
+fn rotation_to_movement(time: Res<Time>, mut q_arwing: Query<&mut Transform, With<Arwing>>) {
+    const SPEED: f32 = 5.;
+    const MAX_TOP: f32 = 0.7;
+    const MAX_BOTTOM: f32 = -1.5;
+    const MAX_LEFT: f32 = -1.7;
+    const MAX_RIGHT: f32 = 1.7;
+    for mut transform in &mut q_arwing {
+        let new_x = transform.translation.x - transform.rotation.z * time.delta_seconds() * SPEED;
+        let new_y = transform.translation.y - transform.rotation.x * time.delta_seconds() * SPEED;
+        transform.translation.x = new_x.clamp(MAX_LEFT, MAX_RIGHT);
+        transform.translation.y = new_y.clamp(MAX_BOTTOM, MAX_TOP);
+    }
+}
+
+fn normalize_rotation(time: Res<Time>, mut q_arwing: Query<&mut Transform, With<Arwing>>) {
+    const NORMALIZE_FACTOR: f32 = 0.2;
+    let normalize_factor = NORMALIZE_FACTOR.powf(time.delta_seconds());
+    for mut transform in &mut q_arwing {
+        transform.rotation.x *= normalize_factor;
+        transform.rotation.y *= normalize_factor;
+        transform.rotation.z *= normalize_factor;
+    }
 }
 
 fn fire_laser(
@@ -117,78 +190,16 @@ fn move_laser(
     for (mut transform, entity) in &mut q_laser {
         let movement_vector = transform.rotation * Vec3::Z;
         transform.translation += movement_vector * time.delta_seconds() * LASER_SPEED;
-        info!(
-            "laser xyz: {},{},{}",
-            transform.translation.x, transform.translation.y, transform.translation.z
-        );
         if transform.translation.z > MAX_DISTANCE {
             commands.entity(entity).despawn_recursive();
         }
     }
 }
 
-fn rotate_arwing(
-    time: Res<Time>,
-    mut q_arwing: Query<&mut Transform, With<Arwing>>,
-    keyboard_input: Res<Input<KeyCode>>,
-) {
-    const ROTATION_SPEED: f32 = 1.5;
-    const MAX_ROT_X: f32 = 0.4;
-    const MAX_ROT_Z: f32 = 0.7;
-    for mut transform in &mut q_arwing {
-        if keyboard_input.pressed(KeyCode::Up) || keyboard_input.pressed(KeyCode::W) {
-            let new_rot_x = transform.rotation.x + time.delta_seconds() * ROTATION_SPEED;
-            transform.rotation.x = new_rot_x.clamp(-MAX_ROT_X, MAX_ROT_X)
-        }
-        if keyboard_input.pressed(KeyCode::Down) || keyboard_input.pressed(KeyCode::S) {
-            let new_rot_x = transform.rotation.x - time.delta_seconds() * ROTATION_SPEED;
-            transform.rotation.x = new_rot_x.clamp(-MAX_ROT_X, MAX_ROT_X)
-        }
-        if keyboard_input.pressed(KeyCode::Right) || keyboard_input.pressed(KeyCode::D) {
-            let new_rot_z = transform.rotation.z + time.delta_seconds() * ROTATION_SPEED;
-            transform.rotation.z = new_rot_z.clamp(-MAX_ROT_Z, MAX_ROT_Z)
-        }
-        if keyboard_input.pressed(KeyCode::Left) || keyboard_input.pressed(KeyCode::A) {
-            let new_rot_z = transform.rotation.z - time.delta_seconds() * ROTATION_SPEED;
-            transform.rotation.z = new_rot_z.clamp(-MAX_ROT_Z, MAX_ROT_Z)
-        }
-
-        info!(
-            "Rotation (x, z): ({}, {})",
-            transform.rotation.x, transform.rotation.z
-        )
+fn rotate_drone(time: Res<Time>, mut q_drone: Query<&mut Transform, With<Drone>>) {
+    for mut transform in &mut q_drone {
+        const ROTATION_SPEED: f32 = 2.0;
+        transform.rotate_local_y(time.delta_seconds() * ROTATION_SPEED);
+        transform.rotate_y(time.delta_seconds() * ROTATION_SPEED);
     }
-}
-
-fn rotation_to_movement(time: Res<Time>, mut q_arwing: Query<&mut Transform, With<Arwing>>) {
-    const SPEED: f32 = 5.;
-    const MAX_TOP: f32 = 0.7;
-    const MAX_BOTTOM: f32 = -1.5;
-    const MAX_LEFT: f32 = -1.7;
-    const MAX_RIGHT: f32 = 1.7;
-    for mut transform in &mut q_arwing {
-        let new_x = transform.translation.x - transform.rotation.z * time.delta_seconds() * SPEED;
-        let new_y = transform.translation.y - transform.rotation.x * time.delta_seconds() * SPEED;
-        transform.translation.x = new_x.clamp(MAX_LEFT, MAX_RIGHT);
-        transform.translation.y = new_y.clamp(MAX_BOTTOM, MAX_TOP);
-        info!(
-            "Location: ({}, {})",
-            transform.translation.x, transform.translation.y
-        );
-    }
-}
-
-fn normalize_rotation(time: Res<Time>, mut q_arwing: Query<&mut Transform, With<Arwing>>) {
-    const NORMALIZE_FACTOR: f32 = 0.2;
-    let normalize_factor = NORMALIZE_FACTOR.powf(time.delta_seconds());
-    info!("normalize: {}", normalize_factor);
-    for mut transform in &mut q_arwing {
-        transform.rotation.x *= normalize_factor;
-        transform.rotation.y *= normalize_factor;
-        transform.rotation.z *= normalize_factor;
-    }
-}
-
-fn _keyboard_input_system(keyboard_input: Res<Input<KeyCode>>) {
-    if keyboard_input.pressed(KeyCode::Up) {}
 }
