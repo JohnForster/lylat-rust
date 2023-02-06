@@ -1,4 +1,5 @@
 use bevy::{pbr::CubemapVisibleEntities, prelude::*, render::primitives::CubemapFrusta};
+use bevy_rapier3d::prelude::*;
 
 #[derive(Component)]
 struct Arwing;
@@ -9,9 +10,13 @@ struct Drone;
 #[derive(Component, Default)]
 struct Laser;
 
+#[derive(Component, Default)]
+struct Destructable;
+
 #[derive(Bundle, Default)]
 struct LaserBundle {
     laser: Laser,
+    destructable: Destructable,
     scene: Handle<Scene>,
     transform: Transform,
     global_transform: GlobalTransform,
@@ -22,6 +27,8 @@ struct LaserBundle {
     cubemap_frusta: CubemapFrusta,
 }
 
+const SCALE: f32 = 0.4;
+
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::rgb(0., 0., 0.)))
@@ -30,6 +37,8 @@ fn main() {
             brightness: 2.0 / 5.0f32,
         })
         .add_plugins(DefaultPlugins)
+        .add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
+        // .add_plugin(RapierDebugRenderPlugin::default())
         .add_startup_system(setup)
         .add_system(rotate_arwing)
         .add_system(rotation_to_movement)
@@ -37,13 +46,14 @@ fn main() {
         .add_system(fire_laser)
         .add_system(move_laser)
         .add_system(rotate_drone)
+        .add_system(laser_destroy)
         .run()
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     spawn_camera(&mut commands);
     spawn_light(&mut commands);
-    spawn_drone(&mut commands, &asset_server);
+    spawn_drones(&mut commands, &asset_server);
     spawn_arwing(&mut commands, &asset_server);
 }
 
@@ -76,20 +86,37 @@ fn spawn_light(commands: &mut Commands) {
     },));
 }
 
-fn spawn_drone(commands: &mut Commands, asset_server: &Res<AssetServer>) {
-    commands.spawn((
-        SceneBundle {
-            scene: asset_server.load("models/drone.glb#Scene0"),
-            transform: Transform {
-                scale: Vec3::from((0.4, 0.4, 0.4)),
-                translation: Vec3::from((0.0, 0.0, 10.0)),
-                rotation: Quat::from_rotation_z(0.5),
+fn spawn_drones(commands: &mut Commands, asset_server: &Res<AssetServer>) {
+    let locations = vec![
+        Vec3::from((0.0, 0.0, 10.0)),
+        Vec3::from((1.0, 1.0, 10.0)),
+        Vec3::from((-1.0, 1.0, 10.0)),
+    ];
+    locations
+        .into_iter()
+        .for_each(|location| spawn_drone(commands, asset_server, location));
+}
+
+fn spawn_drone(commands: &mut Commands, asset_server: &Res<AssetServer>, location: Vec3) {
+    commands
+        .spawn((
+            SceneBundle {
+                scene: asset_server.load("models/drone.glb#Scene0"),
+                transform: Transform {
+                    scale: Vec3::from((0.4, 0.4, 0.4)),
+                    translation: location,
+                    rotation: Quat::from_rotation_z(0.5),
+                    ..default()
+                },
                 ..default()
             },
-            ..default()
-        },
-        Drone,
-    ));
+            Drone,
+            Destructable,
+            Collider::cuboid(2.0 * SCALE, 1.25 * SCALE, 2.0 * SCALE),
+            Sensor,
+        ))
+        .insert(ActiveEvents::COLLISION_EVENTS)
+        .insert(ActiveCollisionTypes::STATIC_STATIC);
 }
 
 fn spawn_arwing(commands: &mut Commands, asset_server: &Res<AssetServer>) {
@@ -166,16 +193,23 @@ fn fire_laser(
 ) {
     if keyboard_input.just_pressed(KeyCode::Space) {
         for transform in &q_arwing {
-            commands.spawn(LaserBundle {
-                scene: asset_server.load("models/blaster_green.glb#Scene0"),
-                transform: Transform {
-                    translation: transform.translation,
-                    rotation: transform.rotation,
-                    scale: Vec3::from((0.4, 0.4, 0.4)),
-                    ..default()
-                },
-                ..default()
-            });
+            commands
+                .spawn((
+                    LaserBundle {
+                        scene: asset_server.load("models/blaster_green.glb#Scene0"),
+                        transform: Transform {
+                            translation: transform.translation,
+                            rotation: transform.rotation,
+                            scale: Vec3::from((0.4, 0.4, 0.4)),
+                            ..default()
+                        },
+                        ..default()
+                    },
+                    Collider::cuboid(0.22 * SCALE, 0.22 * SCALE, 1.25 * SCALE),
+                    Sensor,
+                ))
+                .insert(ActiveEvents::COLLISION_EVENTS)
+                .insert(ActiveCollisionTypes::STATIC_STATIC);
         }
     }
 }
@@ -201,5 +235,22 @@ fn rotate_drone(time: Res<Time>, mut q_drone: Query<&mut Transform, With<Drone>>
         const ROTATION_SPEED: f32 = 2.0;
         transform.rotate_local_y(time.delta_seconds() * ROTATION_SPEED);
         transform.rotate_y(time.delta_seconds() * ROTATION_SPEED);
+    }
+}
+
+fn laser_destroy(
+    mut collision_events: EventReader<CollisionEvent>,
+    mut commands: Commands,
+    q_destructable: Query<&Destructable>,
+) {
+    for collision_event in collision_events.iter() {
+        if let CollisionEvent::Started(e1, e2, _) = collision_event {
+            if q_destructable.get(*e1).is_ok() {
+                commands.entity(*e1).despawn_recursive();
+            }
+            if q_destructable.get(*e2).is_ok() {
+                commands.entity(*e2).despawn_recursive();
+            }
+        }
     }
 }
